@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useCamera } from "@/hooks/use-camera";
 import { useFaceDetection } from "@/hooks/use-face-detection";
-import { computeAttentionScore } from "@/lib/attention-scoring";
-import { AttentionMeter } from "@/components/attention-meter";
+import { computeAttentionScore, type FocusMode } from "@/lib/attention-scoring";
 import { WebcamPreview } from "@/components/webcam-preview";
 import { SessionStats } from "@/components/session-stats";
-import { AttentionFeedback } from "@/components/attention-feedback";
+import { ModeSelector } from "@/components/mode-selector";
 import { Button } from "@/components/ui/button";
 import { Camera, CameraOff, Loader2, Eye } from "lucide-react";
+
+const TICK_MS = 200;
 
 export default function Home() {
   const { videoRef, status, error, startCamera, stopCamera } = useCamera();
@@ -20,25 +21,29 @@ export default function Home() {
   const [averageAttention, setAverageAttention] = useState(0);
   const [longestStreak, setLongestStreak] = useState(0);
   const [showRefocusAlert, setShowRefocusAlert] = useState(false);
+  const [focusMode, setFocusMode] = useState<FocusMode>("screen");
 
   const scoreHistoryRef = useRef<number[]>([]);
   const currentStreakRef = useRef(0);
   const lowScoreTimerRef = useRef(0);
   const sessionStartRef = useRef<number | null>(null);
+  const latestAnalysisRef = useRef(analysis);
+  latestAnalysisRef.current = analysis;
+  const focusModeRef = useRef(focusMode);
+  focusModeRef.current = focusMode;
 
   useEffect(() => {
     startCamera();
   }, [startCamera]);
 
-  const latestAnalysisRef = useRef(analysis);
-  latestAnalysisRef.current = analysis;
-
   useEffect(() => {
     if (!isActive || !modelLoaded) return;
 
+    const tickInterval = TICK_MS / 1000;
+
     const tick = () => {
       const currentAnalysis = latestAnalysisRef.current;
-      const newScore = computeAttentionScore(currentAnalysis);
+      const newScore = computeAttentionScore(currentAnalysis, focusModeRef.current);
       setScore(newScore);
 
       scoreHistoryRef.current.push(newScore);
@@ -46,14 +51,14 @@ export default function Home() {
       setAverageAttention(sum / scoreHistoryRef.current.length);
 
       if (newScore >= 80) {
-        currentStreakRef.current += 0.5;
+        currentStreakRef.current += tickInterval;
         setLongestStreak((prev) => Math.max(prev, Math.round(currentStreakRef.current)));
       } else {
         currentStreakRef.current = 0;
       }
 
       if (newScore < 40) {
-        lowScoreTimerRef.current += 0.5;
+        lowScoreTimerRef.current += tickInterval;
         if (lowScoreTimerRef.current >= 5) {
           setShowRefocusAlert(true);
         }
@@ -64,24 +69,23 @@ export default function Home() {
     };
 
     tick();
-    const interval = setInterval(tick, 500);
+    const interval = setInterval(tick, TICK_MS);
     return () => clearInterval(interval);
   }, [isActive, modelLoaded]);
 
   useEffect(() => {
-    const target = score;
-    const step = () => {
+    let rafId: number;
+    const animate = () => {
       setAnimatedScore((prev) => {
-        const diff = target - prev;
-        if (Math.abs(diff) < 0.5) return target;
-        return prev + diff * 0.15;
+        const diff = score - prev;
+        if (Math.abs(diff) < 0.5) return score;
+        const speed = score < prev ? 0.35 : 0.25;
+        return prev + diff * speed;
       });
+      rafId = requestAnimationFrame(animate);
     };
-    const id = requestAnimationFrame(function animate() {
-      step();
-      requestAnimationFrame(animate);
-    });
-    return () => cancelAnimationFrame(id);
+    rafId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafId);
   }, [score]);
 
   useEffect(() => {
@@ -118,19 +122,17 @@ export default function Home() {
   }, [isActive, startCamera, stopCamera]);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 py-8 gap-6">
-      <header className="flex flex-col items-center gap-1">
+    <div className="min-h-screen bg-background flex flex-col items-center px-4 py-6 gap-4">
+      <header className="flex items-center justify-between w-full max-w-[640px]">
         <div className="flex items-center gap-2">
-          <Eye className="w-6 h-6 text-primary" />
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-app-title">EyeQ</h1>
+          <Eye className="w-5 h-5 text-primary" />
+          <h1 className="text-lg font-bold tracking-tight" data-testid="text-app-title">EyeQ</h1>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Real-time attention tracking
-        </p>
+        <ModeSelector mode={focusMode} onModeChange={setFocusMode} />
       </header>
 
       {(status === "denied" || status === "error") && (
-        <div className="flex flex-col items-center gap-3 max-w-sm text-center">
+        <div className="flex flex-col items-center gap-3 max-w-sm text-center py-12">
           <CameraOff className="w-10 h-10 text-red-400" />
           <p className="text-sm text-muted-foreground" data-testid="text-camera-error">{error}</p>
           <Button onClick={startCamera} data-testid="button-retry-camera">
@@ -140,52 +142,56 @@ export default function Home() {
       )}
 
       {status === "requesting" && (
-        <div className="flex flex-col items-center gap-3">
+        <div className="flex flex-col items-center gap-3 py-12">
           <Loader2 className="w-8 h-8 text-muted-foreground animate-spin" />
           <p className="text-sm text-muted-foreground" data-testid="text-camera-requesting">Requesting camera access...</p>
         </div>
       )}
 
       {isActive && modelLoading && (
-        <div className="flex flex-col items-center gap-3">
+        <div className="flex flex-col items-center gap-3 py-12">
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
           <p className="text-sm text-muted-foreground" data-testid="text-model-loading">Loading face detection model...</p>
         </div>
       )}
 
+      <WebcamPreview
+        ref={videoRef}
+        isActive={isActive}
+        score={score}
+        animatedScore={animatedScore}
+        showRefocusAlert={showRefocusAlert}
+      />
+
       {isActive && modelLoaded && (
-        <>
-          <AttentionMeter score={score} animatedScore={animatedScore} />
-          <AttentionFeedback score={score} showRefocusAlert={showRefocusAlert} />
-          <SessionStats
-            sessionTime={sessionTime}
-            averageAttention={averageAttention}
-            longestStreak={longestStreak}
-          />
-        </>
+        <SessionStats
+          sessionTime={sessionTime}
+          averageAttention={averageAttention}
+          longestStreak={longestStreak}
+        />
       )}
 
-      <WebcamPreview ref={videoRef} isActive={isActive} />
-
-      {(isActive || status === "idle") && (
-        <Button
-          variant={isActive ? "secondary" : "default"}
-          onClick={handleToggle}
-          data-testid="button-toggle-session"
-        >
-          {isActive ? (
-            <>
-              <CameraOff className="w-4 h-4 mr-2" />
-              End Session
-            </>
-          ) : (
-            <>
-              <Camera className="w-4 h-4 mr-2" />
-              Start Session
-            </>
-          )}
-        </Button>
-      )}
+      <div className="flex items-center gap-3">
+        {(isActive || status === "idle") && (
+          <Button
+            variant={isActive ? "secondary" : "default"}
+            onClick={handleToggle}
+            data-testid="button-toggle-session"
+          >
+            {isActive ? (
+              <>
+                <CameraOff className="w-4 h-4 mr-2" />
+                End Session
+              </>
+            ) : (
+              <>
+                <Camera className="w-4 h-4 mr-2" />
+                Start Session
+              </>
+            )}
+          </Button>
+        )}
+      </div>
 
       <p className="text-[10px] text-muted-foreground/60 max-w-xs text-center" data-testid="text-privacy-notice">
         All processing happens locally in your browser. No video data is stored or uploaded.

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { FaceAnalysis } from "@/lib/attention-scoring";
+import { type FaceAnalysis, NO_FACE_ANALYSIS } from "@/lib/attention-scoring";
 
 interface FaceMeshKeypoints {
   noseTip: [number, number, number];
@@ -45,12 +45,7 @@ function getKeypointXYZ(keypoints: any[], index: number): [number, number, numbe
 
 function analyzeKeypoints(keypoints: any[]): FaceAnalysis {
   if (!keypoints || keypoints.length < 468) {
-    return {
-      faceDetected: false,
-      eyesFacingScreen: false,
-      headFacingForward: false,
-      notLookingDown: false,
-    };
+    return NO_FACE_ANALYSIS;
   }
 
   const points: FaceMeshKeypoints = {
@@ -73,17 +68,16 @@ function analyzeKeypoints(keypoints: any[]): FaceAnalysis {
 
   const yaw = computeYaw(points);
   const pitch = computePitch(points);
-  const gazeDeviation = computeGazeDeviation(points, keypoints.length >= 478);
-
-  const headFacingForward = Math.abs(yaw) < 25;
-  const notLookingDown = pitch > -20;
-  const eyesFacingScreen = gazeDeviation < 0.35;
+  const hasIris = keypoints.length >= 478;
+  const gazeDeviation = computeGazeDeviation(points, hasIris);
+  const eyesOpen = computeEyesOpen(points);
 
   return {
     faceDetected: true,
-    eyesFacingScreen,
-    headFacingForward,
-    notLookingDown,
+    yaw,
+    pitch,
+    gazeDeviation,
+    eyesOpen,
   };
 }
 
@@ -104,10 +98,23 @@ function computePitch(points: FaceMeshKeypoints): number {
   return deviation * -90;
 }
 
+function computeEyesOpen(points: FaceMeshKeypoints): boolean {
+  const leftHeight = Math.abs(points.leftEyeUpper[1] - points.leftEyeLower[1]);
+  const rightHeight = Math.abs(points.rightEyeUpper[1] - points.rightEyeLower[1]);
+  const leftWidth = Math.abs(points.leftEyeOuter[0] - points.leftEyeInner[0]);
+  const rightWidth = Math.abs(points.rightEyeOuter[0] - points.rightEyeInner[0]);
+
+  if (leftWidth === 0 || rightWidth === 0) return false;
+
+  const leftRatio = leftHeight / leftWidth;
+  const rightRatio = rightHeight / rightWidth;
+  const avgRatio = (leftRatio + rightRatio) / 2;
+
+  return avgRatio > 0.15;
+}
+
 function computeGazeDeviation(points: FaceMeshKeypoints, hasIris: boolean): number {
-  if (!hasIris) {
-    return 0.1;
-  }
+  if (!hasIris) return 0.1;
 
   const leftEyeWidth = Math.abs(points.leftEyeOuter[0] - points.leftEyeInner[0]);
   const rightEyeWidth = Math.abs(points.rightEyeOuter[0] - points.rightEyeInner[0]);
@@ -141,13 +148,10 @@ function computeGazeDeviation(points: FaceMeshKeypoints, hasIris: boolean): numb
   return Math.sqrt(avgOffsetX * avgOffsetX + avgOffsetY * avgOffsetY);
 }
 
+const DETECTION_INTERVAL_MS = 200;
+
 export function useFaceDetection(videoRef: React.RefObject<HTMLVideoElement | null>, isActive: boolean) {
-  const [analysis, setAnalysis] = useState<FaceAnalysis>({
-    faceDetected: false,
-    eyesFacingScreen: false,
-    headFacingForward: false,
-    notLookingDown: false,
-  });
+  const [analysis, setAnalysis] = useState<FaceAnalysis>(NO_FACE_ANALYSIS);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [modelLoading, setModelLoading] = useState(false);
   const detectorRef = useRef<any>(null);
@@ -201,14 +205,9 @@ export function useFaceDetection(videoRef: React.RefObject<HTMLVideoElement | nu
         const result = analyzeKeypoints(faces[0].keypoints);
         setAnalysis(result);
       } else {
-        setAnalysis({
-          faceDetected: false,
-          eyesFacingScreen: false,
-          headFacingForward: false,
-          notLookingDown: false,
-        });
+        setAnalysis(NO_FACE_ANALYSIS);
       }
-    } catch (err) {
+    } catch {
       // silently ignore detection errors
     }
   }, [videoRef]);
@@ -228,7 +227,7 @@ export function useFaceDetection(videoRef: React.RefObject<HTMLVideoElement | nu
 
   useEffect(() => {
     if (isActive && modelLoaded) {
-      intervalRef.current = setInterval(detectFace, 500);
+      intervalRef.current = setInterval(detectFace, DETECTION_INTERVAL_MS);
     }
 
     return () => {
