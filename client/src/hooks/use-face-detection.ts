@@ -43,9 +43,15 @@ function getKeypointXYZ(keypoints: any[], index: number): [number, number, numbe
   return [kp.x, kp.y, kp.z || 0];
 }
 
-function analyzeKeypoints(keypoints: any[]): FaceAnalysis {
+function analyzeKeypoints(keypoints: any[]): Omit<FaceAnalysis, "phoneDetected"> {
   if (!keypoints || keypoints.length < 468) {
-    return NO_FACE_ANALYSIS;
+    return {
+      faceDetected: false,
+      yaw: 0,
+      pitch: 0,
+      gazeDeviation: 1,
+      eyesOpen: false,
+    };
   }
 
   const points: FaceMeshKeypoints = {
@@ -149,14 +155,18 @@ function computeGazeDeviation(points: FaceMeshKeypoints, hasIris: boolean): numb
 }
 
 const DETECTION_INTERVAL_MS = 200;
+const PHONE_DETECTION_INTERVAL_MS = 500;
 
 export function useFaceDetection(videoRef: React.RefObject<HTMLVideoElement | null>, isActive: boolean) {
   const [analysis, setAnalysis] = useState<FaceAnalysis>(NO_FACE_ANALYSIS);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [modelLoading, setModelLoading] = useState(false);
   const detectorRef = useRef<any>(null);
+  const objectDetectorRef = useRef<any>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const phoneIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
+  const phoneDetectedRef = useRef(false);
 
   const loadModel = useCallback(async () => {
     if (detectorRef.current || modelLoading) return;
@@ -177,6 +187,21 @@ export function useFaceDetection(videoRef: React.RefObject<HTMLVideoElement | nu
 
       if (mountedRef.current) {
         detectorRef.current = detector;
+      }
+
+      try {
+        const cocoSsd = await import("@tensorflow-models/coco-ssd");
+        const objModel = await cocoSsd.load({
+          base: "lite_mobilenet_v2",
+        });
+        if (mountedRef.current) {
+          objectDetectorRef.current = objModel;
+        }
+      } catch (err) {
+        console.warn("Phone detection model failed to load:", err);
+      }
+
+      if (mountedRef.current) {
         setModelLoaded(true);
       }
     } catch (err) {
@@ -202,13 +227,37 @@ export function useFaceDetection(videoRef: React.RefObject<HTMLVideoElement | nu
       if (!mountedRef.current) return;
 
       if (faces && faces.length > 0) {
-        const result = analyzeKeypoints(faces[0].keypoints);
-        setAnalysis(result);
+        const faceResult = analyzeKeypoints(faces[0].keypoints);
+        setAnalysis({
+          ...faceResult,
+          phoneDetected: phoneDetectedRef.current,
+        });
       } else {
-        setAnalysis(NO_FACE_ANALYSIS);
+        setAnalysis({
+          ...NO_FACE_ANALYSIS,
+          phoneDetected: phoneDetectedRef.current,
+        });
       }
     } catch {
-      // silently ignore detection errors
+    }
+  }, [videoRef]);
+
+  const detectPhone = useCallback(async () => {
+    if (!objectDetectorRef.current || !videoRef.current) return;
+
+    const video = videoRef.current;
+    if (video.readyState < 2 || video.videoWidth === 0) return;
+
+    try {
+      const predictions = await objectDetectorRef.current.detect(video, 10, 0.3);
+
+      if (!mountedRef.current) return;
+
+      const hasPhone = predictions.some(
+        (p: any) => p.class === "cell phone" && p.score > 0.3
+      );
+      phoneDetectedRef.current = hasPhone;
+    } catch {
     }
   }, [videoRef]);
 
@@ -228,6 +277,7 @@ export function useFaceDetection(videoRef: React.RefObject<HTMLVideoElement | nu
   useEffect(() => {
     if (isActive && modelLoaded) {
       intervalRef.current = setInterval(detectFace, DETECTION_INTERVAL_MS);
+      phoneIntervalRef.current = setInterval(detectPhone, PHONE_DETECTION_INTERVAL_MS);
     }
 
     return () => {
@@ -235,8 +285,12 @@ export function useFaceDetection(videoRef: React.RefObject<HTMLVideoElement | nu
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
+      if (phoneIntervalRef.current) {
+        clearInterval(phoneIntervalRef.current);
+        phoneIntervalRef.current = null;
+      }
     };
-  }, [isActive, modelLoaded, detectFace]);
+  }, [isActive, modelLoaded, detectFace, detectPhone]);
 
   return { analysis, modelLoaded, modelLoading };
 }

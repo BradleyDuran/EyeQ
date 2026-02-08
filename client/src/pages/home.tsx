@@ -6,7 +6,7 @@ import { WebcamPreview } from "@/components/webcam-preview";
 import { SessionStats } from "@/components/session-stats";
 import { ModeSelector } from "@/components/mode-selector";
 import { Button } from "@/components/ui/button";
-import { Camera, CameraOff, Loader2, Eye } from "lucide-react";
+import { Camera, CameraOff, Loader2, Eye, Bug } from "lucide-react";
 
 const TICK_MS = 200;
 
@@ -22,10 +22,12 @@ export default function Home() {
   const [longestStreak, setLongestStreak] = useState(0);
   const [showRefocusAlert, setShowRefocusAlert] = useState(false);
   const [focusMode, setFocusMode] = useState<FocusMode>("screen");
+  const [showDebug, setShowDebug] = useState(false);
 
   const scoreHistoryRef = useRef<number[]>([]);
   const currentStreakRef = useRef(0);
   const lowScoreTimerRef = useRef(0);
+  const eyesClosedTimerRef = useRef(0);
   const sessionStartRef = useRef<number | null>(null);
   const latestAnalysisRef = useRef(analysis);
   latestAnalysisRef.current = analysis;
@@ -43,7 +45,18 @@ export default function Home() {
 
     const tick = () => {
       const currentAnalysis = latestAnalysisRef.current;
-      const newScore = computeAttentionScore(currentAnalysis, focusModeRef.current);
+
+      if (!currentAnalysis.eyesOpen && currentAnalysis.faceDetected) {
+        eyesClosedTimerRef.current += tickInterval;
+      } else {
+        eyesClosedTimerRef.current = 0;
+      }
+
+      const newScore = computeAttentionScore(
+        currentAnalysis,
+        focusModeRef.current,
+        eyesClosedTimerRef.current
+      );
       setScore(newScore);
 
       scoreHistoryRef.current.push(newScore);
@@ -74,18 +87,7 @@ export default function Home() {
   }, [isActive, modelLoaded]);
 
   useEffect(() => {
-    let rafId: number;
-    const animate = () => {
-      setAnimatedScore((prev) => {
-        const diff = score - prev;
-        if (Math.abs(diff) < 0.5) return score;
-        const speed = score < prev ? 0.35 : 0.25;
-        return prev + diff * speed;
-      });
-      rafId = requestAnimationFrame(animate);
-    };
-    rafId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(rafId);
+    setAnimatedScore(score);
   }, [score]);
 
   useEffect(() => {
@@ -116,6 +118,7 @@ export default function Home() {
       scoreHistoryRef.current = [];
       currentStreakRef.current = 0;
       lowScoreTimerRef.current = 0;
+      eyesClosedTimerRef.current = 0;
     } else {
       startCamera();
     }
@@ -123,12 +126,23 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center px-4 py-6 gap-4">
-      <header className="flex items-center justify-between w-full max-w-[640px]">
+      <header className="flex items-center justify-between gap-2 w-full max-w-[640px]">
         <div className="flex items-center gap-2">
           <Eye className="w-5 h-5 text-primary" />
           <h1 className="text-lg font-bold tracking-tight" data-testid="text-app-title">EyeQ</h1>
         </div>
-        <ModeSelector mode={focusMode} onModeChange={setFocusMode} />
+        <div className="flex items-center gap-2">
+          <Button
+            size="icon"
+            variant={showDebug ? "secondary" : "ghost"}
+            onClick={() => setShowDebug((d) => !d)}
+            className="toggle-elevate"
+            data-testid="button-toggle-debug"
+          >
+            <Bug className="w-4 h-4" />
+          </Button>
+          <ModeSelector mode={focusMode} onModeChange={setFocusMode} />
+        </div>
       </header>
 
       {(status === "denied" || status === "error") && (
@@ -161,6 +175,8 @@ export default function Home() {
         score={score}
         animatedScore={animatedScore}
         showRefocusAlert={showRefocusAlert}
+        analysis={analysis}
+        showDebug={showDebug}
       />
 
       {isActive && modelLoaded && (

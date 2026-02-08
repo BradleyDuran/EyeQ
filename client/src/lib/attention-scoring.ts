@@ -6,6 +6,7 @@ export interface FaceAnalysis {
   pitch: number;
   gazeDeviation: number;
   eyesOpen: boolean;
+  phoneDetected: boolean;
 }
 
 export const NO_FACE_ANALYSIS: FaceAnalysis = {
@@ -14,13 +15,19 @@ export const NO_FACE_ANALYSIS: FaceAnalysis = {
   pitch: 0,
   gazeDeviation: 1,
   eyesOpen: false,
+  phoneDetected: false,
 };
 
-export function computeAttentionScore(analysis: FaceAnalysis, mode: FocusMode): number {
+export function computeAttentionScore(
+  analysis: FaceAnalysis,
+  mode: FocusMode,
+  eyesClosedDuration: number = 0
+): number {
+  if (analysis.phoneDetected) return 0;
   if (!analysis.faceDetected) return 0;
 
   if (mode === "reading") {
-    return computeReadingScore(analysis);
+    return computeReadingScore(analysis, eyesClosedDuration);
   }
 
   return computeScreenScore(analysis);
@@ -48,21 +55,36 @@ function computeScreenScore(a: FaceAnalysis): number {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-function computeReadingScore(a: FaceAnalysis): number {
+function computeReadingScore(a: FaceAnalysis, eyesClosedDuration: number): number {
+  if (!a.eyesOpen) {
+    if (eyesClosedDuration > 2) {
+      return 0;
+    }
+    const decay = Math.max(0, 1 - eyesClosedDuration / 2);
+    return Math.max(0, Math.round(40 * decay));
+  }
+
   let score = 0;
 
   score += 40;
 
-  const absYaw = Math.abs(a.yaw);
-  if (absYaw < 15) score += 25;
-  else if (absYaw < 30) score += 25 * (1 - (absYaw - 15) / 15);
+  score += 30;
 
-  if (a.eyesOpen) {
-    score += 25;
+  const absYaw = Math.abs(a.yaw);
+  if (absYaw < 10) {
+    score += 10;
+  } else if (absYaw < 25) {
+    score += 10 * (1 - (absYaw - 10) / 15);
   }
 
-  if (a.pitch > -40 && a.pitch < 10) {
-    score += 10;
+  if (a.pitch >= -40 && a.pitch <= 10) {
+    const pitchCenter = -15;
+    const pitchDist = Math.abs(a.pitch - pitchCenter);
+    if (pitchDist < 10) {
+      score += 20;
+    } else if (pitchDist < 25) {
+      score += 20 * (1 - (pitchDist - 10) / 15);
+    }
   }
 
   return Math.max(0, Math.min(100, Math.round(score)));

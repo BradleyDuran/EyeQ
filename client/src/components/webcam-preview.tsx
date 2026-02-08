@@ -1,5 +1,5 @@
 import { forwardRef } from "react";
-import { getAttentionColor, getAttentionLabel } from "@/lib/attention-scoring";
+import { getAttentionColor, getAttentionLabel, type FaceAnalysis } from "@/lib/attention-scoring";
 import { Eye, AlertTriangle, XCircle } from "lucide-react";
 
 interface WebcamPreviewProps {
@@ -7,10 +7,12 @@ interface WebcamPreviewProps {
   score: number;
   animatedScore: number;
   showRefocusAlert: boolean;
+  analysis: FaceAnalysis;
+  showDebug: boolean;
 }
 
 export const WebcamPreview = forwardRef<HTMLVideoElement, WebcamPreviewProps>(
-  ({ isActive, score, animatedScore, showRefocusAlert }, ref) => {
+  ({ isActive, score, animatedScore, showRefocusAlert, analysis, showDebug }, ref) => {
     const color = getAttentionColor(score);
     const label = getAttentionLabel(score);
     const displayScore = Number.isFinite(animatedScore) ? Math.round(animatedScore) : 0;
@@ -85,6 +87,46 @@ export const WebcamPreview = forwardRef<HTMLVideoElement, WebcamPreviewProps>(
                 {label}
               </span>
             </div>
+          </div>
+        )}
+
+        {isActive && showDebug && (
+          <div
+            className="absolute bottom-3 left-3 flex flex-col gap-0.5 px-2.5 py-2 rounded-md text-[10px] font-mono leading-tight"
+            style={{
+              backgroundColor: "rgba(0, 0, 0, 0.7)",
+              backdropFilter: "blur(8px)",
+              color: "rgba(255, 255, 255, 0.9)",
+            }}
+            data-testid="debug-overlay"
+          >
+            <span>
+              Face:{" "}
+              <span style={{ color: analysis.faceDetected ? "#22c55e" : "#ef4444" }}>
+                {analysis.faceDetected ? "YES" : "NO"}
+              </span>
+            </span>
+            <span>
+              Eyes:{" "}
+              <span style={{ color: analysis.eyesOpen ? "#22c55e" : "#ef4444" }}>
+                {analysis.eyesOpen ? "OPEN" : "CLOSED"}
+              </span>
+            </span>
+            <span>
+              Pitch: <span style={{ color: "#93c5fd" }}>{analysis.pitch.toFixed(1)}</span>
+            </span>
+            <span>
+              Yaw: <span style={{ color: "#93c5fd" }}>{analysis.yaw.toFixed(1)}</span>
+            </span>
+            <span>
+              Phone:{" "}
+              <span style={{ color: analysis.phoneDetected ? "#ef4444" : "#22c55e" }}>
+                {analysis.phoneDetected ? "DETECTED" : "NONE"}
+              </span>
+            </span>
+            <span>
+              Score: <span style={{ color }}>{score}</span>
+            </span>
           </div>
         )}
 
